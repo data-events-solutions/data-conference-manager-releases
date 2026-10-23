@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FamCtl - أجهزة البيت</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--fg:#111;--muted:#6b7280;--accent:#2563eb;--bad:#b91c1c;--ok:#15803d}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#1a1d24;--fg:#e5e7eb;--muted:#9ca3af}}
+body{font-family:system-ui,Tahoma,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:16px}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.card{background:var(--card);border-radius:12px;padding:16px;margin:12px 0;box-shadow:0 1px 6px #0001}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
+input,textarea,button{font-size:15px;padding:8px;border-radius:8px;border:1px solid #8884;background:transparent;color:inherit}
+textarea{width:100%;box-sizing:border-box;min-height:60px}
+button{cursor:pointer;background:var(--accent);color:#fff;border:0}
+button.bad{background:var(--bad)}button.ok{background:var(--ok)}
+.muted{color:var(--muted);font-size:13px}.dot{display:inline-block;width:10px;height:10px;border-radius:50%}
+.warn{background:#fef3c7;color:#78350f;padding:8px;border-radius:8px;font-size:13px}
+details summary{cursor:pointer;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>أجهزة البيت</h1>
+  <form method="post" action="/logout"><button>خروج</button></form>
+</header>
+{% if dry_run %}<p class="warn">وضع التجربة (dry-run): الأوامر بتتسجل بس ومش بتتنفذ على الراوتر.</p>{% endif %}
+
+<div class="card">
+  <h3>مواقع مقفولة على البيت كله</h3>
+  <textarea id="global" placeholder="موقع في كل سطر، مثلاً: tiktok.com"></textarea>
+  <div class="row"><button onclick="saveGlobal()">حفظ</button><span id="gmsg" class="muted"></span></div>
+</div>
+
+<div id="devices"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+async function api(path, body){
+  const r = await fetch(path, body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const j = await r.json();
+  if(!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+const lines = t => t.split(/\s*[\n,]\s*/).filter(Boolean);
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+async function load(){
+  const {devices, global_blocked} = await api('/api/devices');
+  $('#global').value = global_blocked.join('\n');
+  $('#devices').innerHTML = devices.map(d => `
+  <div class="card" data-mac="${d.mac}">
+    <div class="row">
+      <span class="dot" style="background:${d.online?'var(--ok)':'#999'}"></span>
+      <input class="name" value="${esc(d.name)}" placeholder="${esc(d.hostname||'اسم الجهاز')}">
+      <span class="muted">${d.ip||'—'} · ${d.mac}</span>
+    </div>
+    ${d.random_mac?'<p class="warn">الموبايل ده بيستخدم MAC عشوائي (Private address). اقفلها من إعدادات الواي فاي على الموبايل عشان الإعدادات تفضل ثابتة عليه.</p>':''}
+    <div class="row">
+      <button class="${d.paused?'ok':'bad'}" onclick="save('${d.mac}',{paused:${!d.paused}})">${d.paused?'رجّع النت':'اقطع النت'}</button>
+      <label>تحميل (ميجابت) <input class="down" type="number" min="0" style="width:80px" value="${d.down_mbit}"></label>
+      <label>رفع (ميجابت) <input class="up" type="number" min="0" style="width:80px" value="${d.up_mbit}"></label>
+      <span class="muted">0 = بدون حد</span>
+    </div>
+    <textarea class="blocked" placeholder="مواقع مقفولة على الجهاز ده بس">${esc(d.blocked.join('\n'))}</textarea>
+    <div class="row"><button onclick="saveCard('${d.mac}')">حفظ</button><span class="msg muted"></span></div>
+    <details><summary>تحكم عن بعد (أندرويد)</summary>
+      <p class="muted">على الموبايل: خيارات المطور ← تصحيح الأخطاء اللاسلكي ← الإقران برمز. اكتب العنوان والرمز اللي ظاهرين.</p>
+      <div class="row">
+        <input class="paddr" placeholder="ip:port للإقران">
+        <input class="pcode" placeholder="الرمز (6 أرقام)" style="width:120px">
+        <button onclick="remoteDo('${d.mac}','pair',{addr:card('${d.mac}').querySelector('.paddr').value, code:card('${d.mac}').querySelector('.pcode').value})">إقران</button>
+      </div>
+      <div class="row">
+        <input class="caddr" value="${esc(d.adb)}" placeholder="ip:port للاتصال">
+        <button onclick="remoteDo('${d.mac}','connect',{addr:card('${d.mac}').querySelector('.caddr').value})">اتصال</button>
+        <button class="ok" onclick="remoteDo('${d.mac}','screen',{})">افتح الشاشة</button>
+        <button class="bad" onclick="remoteDo('${d.mac}','disconnect',{})">قطع</button>
+      </div>
+    </details>
+  </div>`).join('') || '<p class="muted">مفيش أجهزة ظاهرة لسه.</p>';
+}
+const card = mac => document.querySelector(`[data-mac="${mac}"]`);
+function msg(mac, text){ const el = card(mac)?.querySelector('.msg'); if(el) el.textContent = text; else alert(text); }
+
+async function save(mac, body){
+  try{ await api('/api/devices/'+mac, body); await load(); msg(mac,'اتحفظ ✓'); }catch(e){ msg(mac, e.message); }
+}
+function saveCard(mac){
+  const c = card(mac);
+  save(mac, {name:c.querySelector('.name').value, down_mbit:+c.querySelector('.down').value,
+             up_mbit:+c.querySelector('.up').value, blocked:lines(c.querySelector('.blocked').value)});
+}
+async function saveGlobal(){
+  try{ await api('/api/global-blocklist',{domains:lines($('#global').value)}); $('#gmsg').textContent='اتحفظ ✓'; }
+  catch(e){ $('#gmsg').textContent=e.message; }
+}
+async function remoteDo(mac, action, body){
+  try{ const r = await api(`/api/remote/${mac}/${action}`, body); msg(mac, r.output || 'تم ✓'); }catch(e){ msg(mac, e.message); }
+}
+load(); setInterval(()=>{ if(!document.activeElement || document.activeElement===document.body) load(); }, 15000);
+</script>
+</body>
+</html>

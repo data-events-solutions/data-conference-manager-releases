@@ -1,0 +1,20 @@
+# systemd unit for a Linux box / Raspberry Pi acting as the home gateway.
+# Copy to /etc/systemd/system/famctl.service, then: systemctl enable --now famctl
+[Unit]
+Description=FamCtl home network device manager
+After=network-online.target dnsmasq.service
+
+[Service]
+WorkingDirectory=/opt/famctl
+Environment=FAMCTL_PASSWORD=CHANGE_ME
+Environment=FAMCTL_TOTAL_MBIT=100
+Environment=FAMCTL_LAN_IFACE=wlan0
+Environment=FAMCTL_ROUTER_IP=192.168.50.1
+Environment=FAMCTL_LEASES=/var/lib/misc/dnsmasq.leases
+Environment=FAMCTL_DNSMASQ_CONF=/etc/dnsmasq.d/famctl.conf
+Environment=FAMCTL_DNSMASQ_RESTART=systemctl restart dnsmasq
+ExecStart=/usr/bin/python3 -m famctl
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
